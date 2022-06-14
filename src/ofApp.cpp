@@ -1,4 +1,58 @@
 #include "ofApp.h"
+#include <vector>
+
+// 탄젠트 벡터 계산 후, 메쉬의 버텍스 컬러 데이터에 임시로 저장해두는 함수
+void calcTangents(ofMesh& mesh) {
+    using namespace glm;
+    std::vector<vec4> tangents; // c++ 에 정의된 표준 라이브러리 사용 시, std:: 접두어를 항상 붙여주도록 함. 여기서는 동적 배열인 std::vector 컨테이너 클래스 템플릿을 사용함.
+    tangents.resize(mesh.getNumVertices()); // 버텍스 개수만큼 탄젠트 벡터를 담는 동적 배열의 길이 생성
+    
+    uint indexCount = mesh.getNumIndices(); // 버텍스의 인덱스 개수만큼 인덱스 카운트 개수 지정
+    
+    const vec3* vertices = mesh.getVerticesPointer();
+    const vec2* uvs = mesh.getTexCoordsPointer();
+    const uint* indices = mesh.getIndexPointer();
+    
+    for (uint i = 0; i < indexCount - 2; i += 3) {
+        const vec3& v0 = vertices[indices[i]];
+        const vec3& v1 = vertices[indices[i + 1]];
+        const vec3& v2 = vertices[indices[i + 2]];
+        const vec2& uv0 = uvs[indices[i]];
+        const vec2& uv1 = uvs[indices[i + 1]];
+        const vec2& uv2 = uvs[indices[i + 2]];
+
+        vec3 edge1 = v1 - v0;
+        vec3 edge2 = v2 - v0;
+        vec2 dUV1 = uv1 - uv0;
+        vec2 dUV2 = uv2 - uv0;
+        
+        float f = 1.0f / (dUV1.x * dUV2.y - dUV2.x * dUV1.y);
+        
+        vec4 tan;
+        tan.x = f * (dUV2.y * edge1.x - dUV1.y * edge2.x);
+        tan.y = f * (dUV2.y * edge1.y - dUV1.y * edge2.y);
+        tan.z = f * (dUV2.y * edge1.z - dUV1.y * edge2.z);
+        tan.w = 0;
+        tan = normalize(tan);
+        
+        tangents[indices[i]] += (tan);
+        tangents[indices[i + 1]] += (tan);
+        tangents[indices[i + 2]] += (tan);
+    }
+    
+    int numColors = mesh.getNumColors();
+    
+    // 위에서 구한 탄젠트 벡터를 메쉬의 버텍스 컬러 location 에 넣어둠. (오픈프레임웍스가 탄젠트 벡터를 지원하지 않기 때문...)
+    for (int i = 0; i < tangents.size(); ++i) {
+        vec3 t = normalize(tangents[i]);
+        
+        if (i >= numColors) {
+            mesh.addColor(ofFloatColor(t.x, t.y, t.z, 0.0));
+        } else {
+            mesh.setColor(i, ofFloatColor(t.x, t.y, t.z, 0.0));
+        }
+    }
+}
 
 // 조명계산 최적화를 위해, 쉐이더에서 반복계산하지 않도록, c++ 에서 한번만 계산해줘도 되는 작업들을 수행하는 보조함수들
 glm::vec3 getLightDirection(DirectionalLight& l) {
@@ -21,9 +75,12 @@ void ofApp::setup(){
     cam.fov = glm::radians(90.0f); // 원근 프러스텀의 시야각은 일반 PC 게임에서는 90도 전후의 값을 사용함. -> 라디안 각도로 변환하는 glm 내장함수 radians() 를 사용함.
 
     shieldMesh.load("shield.ply"); // shieldMesh 메쉬로 사용할 모델링 파일 로드
+    calcTangents(shieldMesh); // shield 메쉬에 탄젠트 벡터를 구한 뒤 버텍스 컬러 자리에 저장하는 함수 실행
+    
     blinnPhongShader.load("mesh.vert", "blinn-phong.frag"); // shieldMesh 에 (노말맵)텍스쳐를 활용한 Blinn-phong 반사모델을 적용하기 위한 셰이더 파일 로드
     diffuseTex.load("shield_diffuse.png"); // shieldMesh 의 조명계산에서 디퓨즈 라이팅 계산에 사용할 텍스쳐 로드
     specTex.load("shield_spec.png"); // shieldMesh 의 조명계산에서 스펙큘러 라이팅 계산에 사용할 텍스쳐 로드
+    nrmTex.load("shield_normal.png"); // shieldMesh 의 조명계산에서 노말맵으로 사용할 텍스쳐 로드
 }
 
 //--------------------------------------------------------------
@@ -91,6 +148,7 @@ void ofApp::draw(){
     blinnPhongShader.setUniform3f("ambientCol", glm::vec3(0.5, 0.5, 0.5)); // 배경색과 동일한 앰비언트 라이트 색상값을 유니폼 변수로 전송.
     blinnPhongShader.setUniformTexture("diffuseTex", diffuseTex, 0); // 디퓨즈 라이팅 계산에 사용할 텍스쳐 유니폼 변수로 전송
     blinnPhongShader.setUniformTexture("specTex", specTex, 1); // 스펙큘러 라이팅 계산에 사용할 텍스쳐 유니폼 변수로 전송
+    blinnPhongShader.setUniformTexture("nrmTex", nrmTex, 2); // 노말 매핑에 사용할 텍스쳐 유니폼 변수로 전송
     shieldMesh.draw(); // shieldMesh 메쉬 드로우콜 호출하여 그려줌.
     
     blinnPhongShader.end();
